@@ -1,0 +1,18 @@
+# docker build -t ipaloma/tornado/app .
+# docker run -d -p 80:80 --name web --mount source=docker_volume_USB,target=/torndo_web/log --mount source=rds_porting,target=/mnt ipaloma/tornado/app:V1.00
+FROM ipaloma/ubuntu/python:V1.00
+
+# for development
+RUN apt-get -y -q install git   
+
+RUN echo "Asia/Shanghai" > /etc/timezone
+ENV PATH=${PATH}:/tornado_web
+ENV TZ=Asia/Shanghai
+EXPOSE 80/tcp
+WORKDIR /tornado_web
+
+COPY . .
+RUN python3 -m pip install -r requirements.txt
+
+ENTRYPOINT python3 main.py --debug
+CMD tail -f /dev/null

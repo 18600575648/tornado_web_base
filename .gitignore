@@ -1,0 +1,11 @@
+log/app_log
+__pycache__
+*.cpython-39.pyc
+log/app_log.1
+log/app_log.2
+log/app_log.3
+log/app_log.4
+log/app_log.5
+log/app_log.6
+log/app_log.7
+

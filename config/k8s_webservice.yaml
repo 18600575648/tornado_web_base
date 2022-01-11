@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: rds-porting
+  name: rds-porting
+  namespace: rds-porting  
+  uid: 3b4d67d3-ff9b-4914-9278-62eef3be404d
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: rds-porting
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        redeploy-timestamp: '1639657347477'
+      labels:
+        app: rds-porting
+    spec:
+      containers:
+        - env:
+            - name: LANG
+              value: zh_CN.UTF-8
+            - name: TZ
+              value: Asia/Shanghai
+            - name: incloud
+              value: '1'
+            - name: clean_downloaded
+              value: '1'
+            - name: aliyun_logs_rds-porting
+              value: /nas/log/app*
+          image: >-
+            ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          lifecycle: {}
+          name: rds-porting
+          ports:
+            - containerPort: 80
+              name: webserver
+              protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /nas
+              name: volume-nas-volume
+            - mountPath: /nas/log/
+              name: volumn-sls-16399241350850
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: volume-nas-volume
+          persistentVolumeClaim:
+            claimName: nas-volume
+        - emptyDir: {}
+          name: volumn-sls-16399241350850

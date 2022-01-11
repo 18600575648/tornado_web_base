@@ -1,0 +1,13 @@
+{
+    "configurations": [      
+
+        {
+            "name": "Python: VENV",
+            "type":"python",
+            "request": "launch",
+            "program": "main.py",
+            "args":["--debug"],
+            "console": "integratedTerminal"
+        }
+    ]
+}

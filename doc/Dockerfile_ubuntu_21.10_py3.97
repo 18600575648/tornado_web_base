@@ -1,0 +1,33 @@
+# 本地构建
+# docker build -t ipaloma/ubuntu/python:V1.00   .
+# 推送到阿里云镜像仓库
+# docker login --username=liu.bin@ipaloma registry.cn-hangzhou.aliyuncs.com
+# docker tag de5d9063c311 registry.cn-hangzhou.aliyuncs.com/ipaloma/ubuntu_python:1.
+# docker push registry.cn-hangzhou.aliyuncs.com/ipaloma/ubuntu_python:1.0
+
+FROM ubuntu:21.10
+# RUN apt-get update
+RUN apt-get install -y locales 
+RUN rm -rf /var/lib/apt/lists/* 
+RUN localedef -i zh_CN -c -f UTF-8 -A /usr/share/locale/locale.alias zh_CN.UTF-8
+
+ENV LANG=zh_CN.UTF-8
+
+RUN apt-get update 
+# RUN apt-get -q -y install apt-utils
+# RUN apt-get -q -y install apt-transport-https
+# RUN apt-get -q -y install ca-certificates
+# RUN apt-get -q -y install gnupg-agent 
+
+# RUN apt-get update
+# RUN apt-get install -y software-properties-common
+# RUN apt-get update
+
+RUN apt-get -y -q install curl
+RUN curl https://bootstrap.pypa.io/get-pip.py -o /get-pip.py
+RUN apt-get -y -q install python3-distutils
+RUN python3 /get-pip.py
+RUN python3 -m pip install pipreqs
+RUN apt -y -q autoremove
+
+CMD ["bash"]

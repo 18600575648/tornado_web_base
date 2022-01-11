@@ -1,0 +1,109 @@
+-env setup
+    .vscode\settings.JSON
+        "PYTHONPATH":"src;components"  #where the Python interpreter should look for modules        
+        "python.envFile": "${workspaceFolder}/.env" virtual env setup!!!!!
+
+-tornado
+    tornado.httpserver — Non-blocking HTTP server
+    tornado.httpclient — Asynchronous HTTP client
+    tornado.httputil — Manipulate HTTP headers and URLs
+
+-web application components
+    web application             DONE
+        handlers                DONE
+            request             DONE
+            response            DONE
+        decorator
+
+    options                     DONE
+        program defined: define("port", default=80, help="listen port", type=int)
+        parse command line: options.parse_command_line()    
+        parse config file:  options.parse_config_file("/etc/server.conf")
+
+    application settings        DONE
+        pass options while create application DONE
+
+    exception fall-over
+        handler._handle_request_exception
+
+    log                                     DONE
+        default use tornado logging         DONE
+        setup the log files                 DONE
+        log output customize                DONE
+            log_request
+                handler.application.log_request(handler._request_summary)
+            other output                    DONE
+    
+    Authentication and security             DONE
+        set_secure_cookie/get_secure_cookie
+        user
+            重载requesthander.get_current_user
+                从cookie中读取
+                通过xsrf(sessionid)获取
+            定制一个loginhandler/login页面
+                前后端分离模式
+                后台渲染模式
+
+                登录验证后在cookie/session中保存相应数据，通过 next 参数跳转到来源页面
+
+        用decorator，强制检查和发起认证，自动跳转到login_url去完成认证
+             @tornado.web.authenticated
+                在login_url后加上next参数，用于登录后回到该页面
+
+
+    openauth
+        tornado.auth — Third-party login with OpenID and OAuth
+            using tornado.auth.GoogleOAuth2Mixin as template to develop weixin openauth component
+    
+    template    DONE
+        build a login with openauth(weixin support)
+
+    database
+        config service
+
+    wechat
+        api proxy封装微信API功能，成为微服务
+            移植现有分布式锁支持的accesstoken获取
+            提供OAUTH的服务接口 获取身份，完成认证过程并返回调用方
+            提供client的各种功能接口
+            基于开放平台
+
+        微信的业务回调接口 属于 业务服务 调用底层OAUTH功能
+        其它业务服务需要使用微信功能也调用底层接口
+
+-template
+    internationalize
+        _("Translate this string")
+
+-docker config  DONE
+    start as remote-containers create a new dir / load from a dir has dorckerfile
+    bind mount the current workspace in local to the target working dir of container
+        edit/manage local file, debug in container
+
+    build
+        docker build -t ipaloma/tornado/app:V1.00 .
+    run container
+        docker run -dit -p 80:80 --name web --mount source=docker_volume_USB,target=/tornado_web  ipaloma/tornado/app:V1.00
+            --mount source=docker_volume_USB,target=/tornado_web  在永久化保存区域中修改保存
+    debug with docker
+
+    使用阿里云docker镜像仓库
+    创建仓库 ： 命名空间/仓库   ipaloma/ubunto.python
+
+    获得仓库路径：registry.cn-hangzhou.aliyuncs.com/ipaloma/ubuntu.python
+    
+    本地准备，创建同名镜像
+    docker tag ipaloma/ubuntu/python:V1.00 registry.cn-hangzhou.aliyuncs.com/ipaloma/ubuntu.python:V1.00
+
+    登录/上传
+    docker login --username=liu.bin@ipaloma registry.cn-hangzhou.aliyuncs.com
+    docker push registry.cn-hangzhou.aliyuncs.com/ipaloma/ubuntu.python:V1.00
+
+-python 检查真正的依赖关系，而不是把环境中的内容全部打包
+    python -m pip install pipreqs
+    pipreqs ./  --encoding=utf8  --force
+    tail -f filename 一直刷新文件变化
+-K8S cluster
+    nas 只能用pvc+pv，在不同应用/不同pod间共享，不能用pvc+storage class方式
+        隔离：不同应用挂载nas下不同的目录，同一应用的不同pod按照需要自行处理隔离
+    
