@@ -49,11 +49,13 @@ log_to_stderr = True if any(
 
 createDirIfNotExists(log_dir)
 
-mysql_config={
-    'host':'',
-    'port':123,
-    'username':'',
-    'password':'',
+mysql_pool_config={
     'pool_max_size':20,
-    'pool_recycle': 60
+    'pool_recycle_time': 60
+}
+mysql_config={
+    'host':'rm-uf642102c6905a2xneo.mysql.rds.aliyuncs.com',
+    'port':3306,
+    'user':'linku',
+    'password':'linku!@#$4321'
 }

@@ -4,11 +4,9 @@ import ujson as json
 import tornado.auth
 from tornado.web import RequestHandler
 from tornado import httpclient
-from tornado.log import app_log
-import uuid
-import time
 from components.basehandler.basehandler import *
-
+from components.database.mysqldb import MySqlDB
+from components.utils.misc import guid
 
 class HelloHandler(UIHandler):
 
@@ -27,6 +25,27 @@ class HelloHandler(UIHandler):
     def post(self):
         self.write("Hello, world2")
 
+class DBHandler(UIHandler):
+
+    # http actions: get/head/post/delete/patch/put/options
+    async def get(self):
+        try:
+            db = MySqlDB(self.application.settings['mysql_config'])            
+            await db.exec_sql('create database if not exists linku_ems')
+            await db.exec_sql("""
+            use linku_ems; 
+            drop table if exists tblaccount;
+            create table if not exists tblaccount(
+                oid int unsigned auto_increment, 
+                guid varchar(64) not null unique, 
+                account_name varchar(64) not null,
+                PRIMARY KEY (oid))
+            """)
+            await db.exec_sql(f'insert into tblaccount(guid,account_name)values("{guid()}","abc")')
+            self.write(await db.exec_select('select guid from tblaccount order by oid limit 10'))
+        except Exception as ex:
+            self.log.exception(ex)
+            self.write(ex)        
 
 class SpiderHandler(DefaultHandler):
     @tornado.web.authenticated
@@ -81,5 +100,6 @@ handler_map = [
     (r'/spider', SpiderHandler),
     #(r'/redirect/([\w\.]+)', RedirectHandler ),
     (r'/redirect/(?P<url>.+)', RedirectHandler),
-    (r'/auth/(?P<service>.+)', OpenAuthHandler),    
+    (r'/auth/(?P<service>.+)', OpenAuthHandler), 
+    (r'/db', DBHandler), 
 ]

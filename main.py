@@ -1,18 +1,15 @@
 #!/usr/bin/ python
 # -*- coding: utf-8 -*-
 
-import asyncio
 import logging
 from collections import defaultdict
 
-import aiomysql
 import tornado.httpserver
 import tornado.ioloop
 import tornado.log
 import tornado.web
 from tornado.options import define, options
 from tornado.web import Application, RequestHandler
-from components.database.mysql_conn_pool2 import DBMySql
 
 from components.basehandler.webapp import (AppLogger, IPAApplication,
                                            LogFormatter)
@@ -56,6 +53,5 @@ if __name__ == "__main__":
     server.start(app.settings.get('forks', 1))  # forks one process per cpu
     
     io = tornado.ioloop.IOLoop.current()
-    io.add_callback(app.execute_start_command)
-    io.add_callback(DBMySql.init_conn_pool, defaultdict(str,app.settings.get('mysql_config')))
+    io.add_callback(app.execute_start_command)    
     io.start()

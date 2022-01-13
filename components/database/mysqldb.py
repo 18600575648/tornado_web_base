@@ -1,15 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+from collections import defaultdict
 import re
-import sys
-from aiomysql.connection import connect
 import ujson as json
 import time
 import aiomysql
 import asyncio
-
-import six
-
+from components.database.mysqlpool import create_pool, Pool
 from components.utils.log import ExtraLog
 from tornado.log import app_log
 from components.utils.misc import escape_string
@@ -34,7 +31,7 @@ class DBDisconnect(DBProxyException):
     def __str__(self):
         return "MSSQLDBDisconnect: error_code:%d %s" % (self.error_code, self.message)
 
-class DBMySql(object):
+class MySqlDB(object):
     """The base class for loma DB handle classes.
     This base class will define the interface and realize the common function.
     Current support two DB libraries: pymssql(FreeTDS), pyodbc(Microsoft ODBC Driver 11 for Linux)."""
@@ -55,7 +52,6 @@ class DBMySql(object):
     """Default print executed SQL length."""
     SQL_PRINT_LEN = 500
     GL_opendb_conns = 0
-    conn_pool = None
 
     @staticmethod
     def set_retry_err_code_list(err_code_list=None):
@@ -63,9 +59,9 @@ class DBMySql(object):
         The latest value will be retruned.
         """
         if not err_code_list:
-            return DBProxyBase.LOCK_RETRY_ERR_CODE_LIST
-        DBProxyBase.LOCK_RETRY_ERR_CODE_LIST = err_code_list
-        return DBProxyBase.LOCK_RETRY_ERR_CODE_LIST
+            return MySqlDB.LOCK_RETRY_ERR_CODE_LIST
+        MySqlDB.LOCK_RETRY_ERR_CODE_LIST = err_code_list
+        return MySqlDB.LOCK_RETRY_ERR_CODE_LIST
 
     @staticmethod
     def set_sql_print_len(print_len=0):
@@ -73,23 +69,25 @@ class DBMySql(object):
         The latest value will be return.
         """
         if print_len <= 0:
-            return DBProxyBase.SQL_PRINT_LEN
-        DBProxyBase.SQL_PRINT_LEN = print_len
-        return DBProxyBase.SQL_PRINT_LEN
+            return MySqlDB.SQL_PRINT_LEN
+        MySqlDB.SQL_PRINT_LEN = print_len
+        return MySqlDB.SQL_PRINT_LEN
 
     @staticmethod
     def parse_sqlalchemy_dburl(db_uri, query_timeout=600, login_timeout=40):
         """Analyze the `db_uri` into configure dictionary which in sqlalchemy style."""
-        db_dict = {}
+        db_dict = defaultdict(str,{})
+        if not db_uri:
+            return db_dict
         tmp_list = db_uri.split(':')
         tmp1_list = tmp_list[2].split('@')
-        db_dict['user'] = tmp_list[1][2:]
+        db_dict['username'] = tmp_list[1][2:]
         db_dict['password'] = tmp1_list[0]
-        db_dict['server'] = tmp1_list[1]
+        db_dict['host'] = tmp1_list[1]
         tmp2_list = tmp_list[3].split('/')
         db_dict['port'] = tmp2_list[0]
-        db_dict['database'] = tmp2_list[1]
-        db_dict['charset'] = 'UTF-8'
+        db_dict['db'] = tmp2_list[1]
+        db_dict['charset'] = 'utf8mb4'
         db_dict['timeout'] = query_timeout
         db_dict['login_timeout'] = login_timeout
         return db_dict
@@ -128,7 +126,7 @@ class DBMySql(object):
             escape_str = json.dumps(val)
 
         if type_name in ('str', 'unicode', 'dict'):            
-            escape_str = DBProxyBase.mysql_escape_string(escape_str)
+            escape_str = MySqlDB.mysql_escape_string(escape_str)
             return "'%s'" % escape_str
         return "'%s'" % str(escape_str)
 
@@ -138,64 +136,83 @@ class DBMySql(object):
         if type == 'insert':
             for col in cols:
                 if col in vals:
-                    hold_list.append(DBProxyBase.val2SqlVal(vals[col]))
+                    hold_list.append(MySqlDB.val2SqlVal(vals[col]))
                 elif makeupnull:
-                    hold_list.append(DBProxyBase.val2SqlVal(None))
+                    hold_list.append(MySqlDB.val2SqlVal(None))
         if type == 'update':
             for col in cols:
                 if col in vals:
-                    hold_list.append("%s=%s" % (col, DBProxyBase.val2SqlVal(vals[col])))
+                    hold_list.append("%s=%s" % (col, MySqlDB.val2SqlVal(vals[col])))
                 elif makeupnull:
-                    hold_list.append("%s=%s" % (col, DBProxyBase.val2SqlVal(None)))
+                    hold_list.append("%s=%s" % (col, MySqlDB.val2SqlVal(None)))
         return ",".join(hold_list)
 
-    conn_pool = None
-    @staticmethod
-    async def init_conn_pool(config):
-        result = await aiomysql.create_pool(host=config['host'], port=config['port'], user=config['user'],
-                                      password=config['password'],
-                                      db=config['database'],
-                                      loop=asyncio.get_event_loop(), autocommit=True,
-                                      maxsize=config['pool_max_size'],
-                                      pool_recycle=config['pool_recycle'],
-                                      charset='utf8mb4')
-        global conn_pool
-        conn_pool = result[0]
+    _conn_pool = None
+    _condition = asyncio.Condition()
+    async def _ensure_pool(self):
+        """获得或者初始化连接池"""
+        async with MySqlDB._condition:
+            if MySqlDB._conn_pool:
+                return MySqlDB._conn_pool
+            if not self._config:
+                raise DBProxyRuntimeException('not provide correct config / uri to create db connection')
+            # config: host/port/user/password/db/charset/autocommit
+            self._config['charset'] = self._config.get('charset', 'utf8mb4')
+            self._config['autocommit'] = True if not 'autocommit' in self._config else self._config['autocommit']
+            # 创建连接池，并确保有最小数量（缺省为1）的可用连接
+            MySqlDB._conn_pool = await create_pool(
+                                        maxsize=self._config.get('pool_max_size', 10),
+                                        minsize=self._config.get('pool_min_size', 1),
+                                        pool_recycle=self._config.get('pool_recycle_time',-1),
+                                        **self._config)
+            return MySqlDB._conn_pool
+
+    async def get_conn(self):
+        if not self._conn_pool:
+            self._conn_pool = await self._ensure_pool()
+
+        # 配置没有改变，使用已有的连接
+        if self._conn and not self._conn.closed and self._conn_pool.config_key(self._conn) == self._conn_pool.config_key(**self._config):
+            return self._conn
+
+        # 更换连接，归还到连接池
+        if self._conn:
+            self._conn_pool.release(self._conn)
+            self._conn = None
         
+        # 获取新的连接
+        self._conn = await self._conn_pool.acquire(**self._config)
+        return self._conn
 
-    @staticmethod
-    def sql_readonly_check(checksql):
-        '''检查sql字符串中是否包含修改行为的关键字'''
-        keys = ('insert','update','delete','exec','call','set','shutdown','setuser','write',
-            'alter','execute','restore','grant','revoke','writetext','lock','rename',
-            'commit','begin','create','updatetext','drop','dump','truncate','replace')
-        contain_keys = []
-        for key in keys:
-            if re.search(key+r'\s+', checksql, re.I):
-                contain_keys.append(key)
-        return contain_keys
-
-    def check_nolock(self, sql):
-        # with(nolock)
-        final_sql = re.search(r'with\s*\(\s*nolock\s*\)',sql,flags=re.IGNORECASE)
-        return final_sql!=None
-
-    def __init__(self, db_name):
-        """`config_db_uri`: the connect string to the Configure Server Database.
+    def __init__(self, config={}, uri=""):
+        """`uri`: the connect string to the Configure Server Database.
         pymssql example: mssql+pymssql://test:test@ipaloma1inner.sqlserver.rds.aliyuncs.com:3221/op
         pyodbc example : Driver={ODBC Driver 11 for SQL Server};Server=192.168.1.122,3389;Database=master;Uid=test;Pwd=test;
         ATTENTION: pyodbc connect string default ues the 'master' database, you shuold call 'USE [DATABASE]' to change the target database.
                 Do NOT use the target database directly else the ODBC driver will throw out 'Segmentation fault'
                 when you try make second same database connection, specailly when SQL Server use 'mirror' backup method.
+        `config`: dict version of the connection uri: host/port/user/password/database/charset/autocommit
         """        
-        self._db_name = db_name
+        self.config(config, uri)
         self.log = ExtraLog(self, app_log)
+        self._conn = None
+        self._conn_pool = None        
+
+    def config(self, config={}, uri=""):
+        """`config`: json for connection config: host/port/user/password/db
+        `uri`: odbc connection string
+        """
+        self._config = config if config else MySqlDB.parse_sqlalchemy_dburl(uri)
+        
+    def change_db(self, db):
+        """`db` the next db to be used"""
+        self._config['db'] = db
 
     def __del__(self):
         pass
 
     def format_params(self, param_list):
-        return [ DBProxyBase.val2SqlVal(parameter, None) for parameter in param_list ]
+        return [ MySqlDB.val2SqlVal(parameter, None) for parameter in param_list ]
 
     async def process_exception(self, conn, e):
         if await conn.ping():
@@ -203,73 +220,59 @@ class DBMySql(object):
         else:
             raise DBProxyRuntimeException("查询失败(ERROR:%s)" % e)
 
-    async def exec_modify_sql_no_fetch(self, sql):
-        await self.exec_modify_sql_no_fetch(sql, params=None)
-
-    async def change_database(self, cursor):
-        sql = 'use `%s`;' % self._db_name
-        await cursor.execute(sql)
-        
-    async def exec_modify_sql_no_fetch(self, sql, params=None):
+    async def exec_sql(self, sql, params=None, commit=False):
         """Execute the SQL without fetch the result"""
         affect_rows = 0
         
         start_point = time.time()
-        async with self.get_db_conn().acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                try:
-                    self.change_database(cursor)
-                    affect_rows = cursor.execute(sql, params)
-                except Exception as e:
-                    self.log.exception('exec_modify_sql_no_fetch error:%s %s\tSQL TIME USAGE:%.3fs'
-                                        %(sql, e, time.time()-start_point))
-                    await self.process_exception(conn,e)
-                self.log.info('%s\tSQL TIME USAGE:%.3fs affect_rows:%d' % (sql[:DBProxyBase.SQL_PRINT_LEN], time.time()-start_point, affect_rows))
+        conn = await self.get_conn()
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            try:
+                affect_rows = await cursor.execute(sql, params)
+                if commit:
+                    await conn.commit()
+            except Exception as e:
+                self.log.exception('exec_modify_sql_no_fetch error:%s %s\tSQL TIME USAGE:%.3fs'
+                                    %(sql, e, time.time()-start_point))
+                await self.process_exception(conn,e)
+            self.log.info('%s\tSQL TIME USAGE:%.3fs affect_rows:%d' % (sql[:MySqlDB.SQL_PRINT_LEN], time.time()-start_point, affect_rows))
         return
 
-    async def exec_select(self, sql, fetch_result=True, allow_large_data=True):
+    async def exec_select(self, sql, fetch_result=True):
         """Execute a SQL and return a list contains the result.
-        `as_dict_flag`: the row will be rebuild into dictionary;
+        `sql`: sql statement(s)
         `fetch_result`: whether fetch the result set if False the empty list will be return.
+        the row will be rebuild into dictionary;        
         """        
-        sql = self.sqlserver2mysql(sql)
-        
         fetch_object_method_time_usage, execute_object_method_time_usage, start_point = 0, 0, time.time()
         
-        async with self.get_db_conn().acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:                
-                rc = []
-                try:
-                    self.change_database(cursor)
-                    if allow_large_data:
-                        await conn.set_limit_count(0)
-                    else:
-                        await conn.set_limit_count(50000)
-                    cursor.execute(sql)
-                    if await conn.get_out_of_limit_count_status():
-                        raise DBProxyRuntimeException("allow_large_data--Surch result count more than 50000")
-                    execute_object_method_time_usage = time.time() - start_point
-                    start_point = time.time()
-                    
-                    if fetch_result:
-                        # rc = cursor.fetchall()
-                        rc = []
-                        while True:
-                            many = await cursor.fetchmany(1000)
-                            if not many:
-                                break
-                            rc.extend(many)
-                            await asyncio.sleep(0)
-                        if len(rc)>20000:
-                            self.log.info("allow_large_data--Surch result count more than 20000")
-                    fetch_object_method_time_usage = time.time() - start_point
-                except Exception as e:
-                    self.log.exception('exec_select error:%s %s\tSQL TIME USAGE:%.3fs'
-                                        %(sql, e, time.time()-start_point))
-                    await self.process_exception(conn, e)
+        conn = await self.get_conn()
+        async with conn.cursor(aiomysql.DictCursor) as cursor:                
+            rc = []
+            try:
+                await cursor.execute(sql)                    
+                execute_object_method_time_usage = time.time() - start_point
+                start_point = time.time()
+                
+                if fetch_result:
+                    # rc = cursor.fetchall()
+                    rc = []
+                    while True:
+                        many = await cursor.fetchmany(1000)
+                        if not many:
+                            break
+                        rc.extend(many)
+                        await asyncio.sleep(0)
+                    if len(rc)>20000:
+                        self.log.info("allow_large_data--Surch result count more than 20000")
+                fetch_object_method_time_usage = time.time() - start_point
+            except Exception as e:
+                self.log.exception('exec_select error:%s %s\tSQL TIME USAGE:%.3fs'
+                                    %(sql, e, time.time()-start_point))
+                await self.process_exception(conn, e)
 
         self.log.info('%s\tTIME USAGE: SQL Execute:%.3fs Fetch Result:%.3fs'
-            %(sql[:DBProxyBase.SQL_PRINT_LEN], execute_object_method_time_usage, fetch_object_method_time_usage))
+            %(sql[:MySqlDB.SQL_PRINT_LEN], execute_object_method_time_usage, fetch_object_method_time_usage))
         return rc
 
     async def call_procedure(self, proc_name, parameters=[], fetch_result=True,allow_large_data=True):
@@ -278,7 +281,7 @@ class DBMySql(object):
         `fetch_result`: whether fetch the result set if False the empty list will be return.
         """
         fetch_object_method_time_usage, execute_object_method_time_usage, start_point = 0, 0, time.time()
-        async with self.get_db_conn().acquire() as conn:
+        async with (await self.get_conn()) as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:        
                 rc = []
                 try:
@@ -317,17 +320,19 @@ class DBMySql(object):
             %(proc_name, parameters, execute_object_method_time_usage, fetch_object_method_time_usage))
         return rc
 
-    async def executemany(self, oper_sql, sql_of_params):
+    async def executemany(self, oper_sql, sql_of_params, commit=False):
         """Call executemany() function.
         `as_dict_flag`: the row will be rebuild into dictionary;
         `fetch_result`: whether fetch the result set if False the empty list will be return.
         """
         execute_object_method_time_usage, start_point = 0, time.time()
-        async with self.get_db_conn().acquire() as conn:
+        async with  (await self.get_conn()) as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:        
                 try:
                     self.change_database(cursor)
                     await cursor.executemany(oper_sql, sql_of_params)
+                    if commit:
+                        await conn.commit()
                     execute_object_method_time_usage = time.time() - start_point                    
                 except Exception as e:
                     

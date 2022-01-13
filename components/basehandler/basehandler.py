@@ -115,6 +115,9 @@ class DefaultHandler(RequestHandler):
         except Exception as e:
             return e
         
+    def write(self, data) -> None:        
+        super().write(json.dumps(data, indent=True) if data != None and type(data) == list else data)
+            
 
     # customize the exception fallover handler
     def _handle_request_exception(self, e: BaseException) -> None:

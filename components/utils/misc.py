@@ -4,6 +4,7 @@ import stat
 import sys
 from collections import defaultdict
 from pathlib import Path, PurePath
+from uuid import uuid1
 
 import six
 import ujson as json
@@ -78,6 +79,8 @@ def abstractValue(dict1, keys, default=''):
   return list(({key:dict1.get(key.strip(), default) for key in keys}).values())
 
 
+def guid():
+  return str(uuid1()).replace("-", "")
 
 unichr = chr
 _escape_table = [unichr(x) for x in range(128)]
@@ -95,20 +98,4 @@ def _escape_unicode(value, mapping=None):
     """
     return value.translate(_escape_table)
 
-if six.PY2:
-    def escape_string(value, mapping=None):
-        """escape_string escapes *value* but not surround it with quotes.
-        Value should be bytes or unicode.
-        """
-        if isinstance(value, unicode):
-            return _escape_unicode(value)
-        value = value.replace('\\', '\\\\')
-        value = value.replace('\0', '\\0')
-        value = value.replace('\n', '\\n')
-        value = value.replace('\r', '\\r')
-        value = value.replace('\032', '\\Z')
-        #value = value.replace("'", "\\'") #为兼容JSONData数据字符串自动给出两个单引号
-        value = value.replace('"', '\\"')
-        return value
-else:
-    escape_string = _escape_unicode
+escape_string = _escape_unicode
